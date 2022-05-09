@@ -1,4 +1,4 @@
-function [solutionPert, supp_out] =  MinMicrobiome(modelCom,options)
+function [solutionPert, supp_out] =  minMicrobiome(modelCom,options)
 milp_max = 50;
 tol = 1E-3;
 n_org_actual = size(modelCom.modelID,1); %No. of organisms in original community
