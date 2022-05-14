@@ -7,7 +7,7 @@ minMicrobiome is an algorithm to identify minimal microbiomes that are capable o
 
 ## Instructions for use
 The function can be called using the command:
-`[solutionPert, supp_out] = MinMicrobiome(modelCom, options);`
+`[solutionPert, supp_out] = minMicrobiome(modelCom, options);`
 
 ### Inputs
 _modelCom_ - a community model of AGORA models created using the COBRA toolbox function `createCommModel`, such that:  
