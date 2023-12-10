@@ -26,12 +26,15 @@ _modelCom_ - a community model of AGORA models created using the COBRA toolbox f
   - 4: maximum metabolite 3 production     
   (default _constraint_ value = 1. Default _met_names_: metabolite 1 = acetate, metabolite 2 = butyrate and metabolite 3 = propionate)      
  5.	Maximum number of organisms for MILP – _maxMILP_ (default value = 10)  
- 6.	Total no. of iterations the code should run – _iter_ (default value = 3)  
- 7.	Maximum number of rounds the generated random sequence should be ran over for deletion (MILP may not reduce to the desired number with 1 round) – _max_del_rounds_ (default value = 10)   
- 8.	Fraction of original growth rates for constraint while finding maximum SCFA production of the original community - _gr_opt_frac_ (default value = 0.99)  
- 9. Sequence for deletion - _del_seq_ (generated randomly by default)  
+ 6.	Total no. of iterations the code should run – _iter_ (default value = 3)
+  7. Number of times the MILP should be run with different initial conditions – _MILP_runs_ (default value = 1; keep this value to be <= number of organisms)
+ 8.	Maximum number of rounds the generated random sequence should be ran over for deletion (MILP may not reduce to the desired number with 1 round) – _max_del_rounds_ (default value = 10)   
+ 9.	Fraction of original growth rates for constraint while finding maximum SCFA production of the original community - _gr_opt_frac_ (default value = 0.99)  
+ 10. Sequence for deletion - _del_seq_ (generated randomly by default)
+11.  Does the metabolite production rate need to be calculated – 'yes' or 'no'? - _met_calc_minMicrobiome_ (default value = ‘yes’)
+12.  What is the maximum time up to which you would like it to run (seconds) – _time_budget_ (default value = 10800 s)
 
 ### Outputs
 1.  _solutionPert_: a cell containing the identified minimal microbiomes after running the specified number of iterations (No. of minimal microbiomes calculated <= no. of iterations) 
-2.  _supp_out_: the additional output containing the full community growth rate (_gr_max_), maximum individual growth rates and maximum SCFA production (_max_scfa_) of the original community, and the list of organisms removed during the initial deletion 
+2.  _supp_out_: the additional output containing  the list of all distinct minimal microbiomes identified, maximum production rate by each of them if applicable, the full community growth rate (_gr_max_), maximum individual growth rates and maximum SCFA production (_max_scfa_) of the original community, and the list of organisms removed during the initial deletion 
 
