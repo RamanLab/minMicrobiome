@@ -1,74 +1,108 @@
 function [solutionPert, supp_out] =  minMicrobiome(modelCom,options)
-milp_max = 50;
-tol = 1E-3;
+startTime = tic;    %Starting the timer
+milp_max = 100;     %Max possible size for MILP - change according to requirement
+
+
+%Initializations
+tol = 1E-3;         %Used to determine SCFA production rates
 n_org_actual = size(modelCom.modelID,1); %No. of organisms in original community
+supp_out = struct();
+solutionPert = {};
+supp_out.org_thrown_out = {};
+supp_out.num_min_orgs = [];
+supp_out.del_seq = [];
+supp_out.scfa_minMicrobiome = [];
+supp_out.minMicrobiomes = {};
+orgs_in_minMicrobiome = {};
+exitOuterLoop = false;
+
 %% The optional inputs assignment
-if isfield(options,'gr_frac')
+if isfield(options,'gr_frac')   %Fraction of growth rate needed to be preserved in the minimal microbiome
     gr_frac = options.gr_frac;
 else
     gr_frac = 0.8;
 end
-if isfield(options,'scfa_frac')
+if isfield(options,'scfa_frac') %Fraction of SCFA needed to be preserved in the minimal microbiome
     scfa_frac = options.scfa_frac;
 else
     scfa_frac = 0.8;
 end
 
-if isfield(options,'c')
+if isfield(options,'c') %For coupling constraints to avoid fluxes without biomass
     c = options.c;
 else
     c = 1000;
 end
-if isfield(options,'u')
+if isfield(options,'u') %For coupling constraints to avoid fluxes without biomass
     u = options.u;
 else
     u = 0.01;
 end
 
-if isfield(options, 'constraint')
+if isfield(options, 'constraint')   %The functionality constraint
     cnstrt = options.constraint;
 else
     cnstrt = 1;
 end
 
-if isfield(options, 'maxMILP')
+if isfield(options, 'maxMILP')      %No. of members (integer variables) in MILP that is to be minimized
     maxMILP = options.maxMILP;
 else
     maxMILP = 10;
 end
 
-if isfield(options, 'iter')
+if isfield(options, 'MILP_runs')    %No. of times MILP will be run by changing the initial conditions
+    MILP_runs = options.MILP_runs;
+    if (MILP_runs > n_org_actual)
+        MILP_runs = 1;
+        fprintf("Since MILP_runs > max no. of organisms, it has been set to %d.\n", n_org_actual);
+    end
+else
+    MILP_runs = n_org_actual;
+end
+
+if isfield(options, 'iter')     %No. of iterations -- staring from the deletion step
     iter = options.iter;
 else
     iter = 3;
 end
 
-if isfield(options, 'max_del_rounds')
+if isfield(options, 'time_budget')  %How much time can we afford to run?
+    time_budget = options.time_budget;
+else
+    time_budget = 10800;
+end
+
+if isfield(options, 'max_del_rounds')   %No. of times deletion sequence is repeated to arrive at 'maxMILP' elements in the MILP
     max_del_rounds = options.max_del_rounds;
 else
     max_del_rounds = 10;
 end
 
-if isfield(options, 'gr_opt_frac')
+if isfield(options, 'gr_opt_frac')  %Optimum fraction of biomass growth for SCFA production
     gr_opt_frac = options.gr_opt_frac;
 else
     gr_opt_frac = 0.99;
 end
 
-if (isfield(options, 'constraint_wt') && cnstrt == 1)
+if (isfield(options, 'constraint_wt') && cnstrt == 1)   %Weightage on functionality constraint
     wtg = options.constraint_wt;
 else
     wtg = 1;
 end
 
-if isfield(options, 'met_names') 
-    scfa_pat = options.met_names;
+if isfield(options, 'met_calc_minMicrobiome')  %Should we calculate the metabolite rate from the resultant minimal microbiome?
+    met_calc_min = options.met_calc_minMicrobiome;
+else
+    met_calc_min = 'yes';
+end
+
+if isfield(options, 'met_names')
+    scfa_pat = options.met_names;   %Names of the metabolites of interest - to be used in the functionality
 else
     scfa_pat = {'EX_ac(u)'; 'EX_but(u)'; 'EX_ppa(u)'};  %acetate, butyrate and propionate
 end
 
-solutionPert = cell(1,iter);
-supp_out = struct();
 %% Coupling constraints
 for i = 1:n_org_actual
     pat = strcat('org',int2str(i));
@@ -112,7 +146,7 @@ pertModel_scfa.c(scfa_list) = wtg;
 LPproblem = buildLPproblemFromModel(pertModel_scfa);
 solutionPert_scfa = solveCobraLP(LPproblem);
 max_scfa = solutionPert_scfa.full(scfa_list);
-disp(max_scfa);
+fprintf('Maximum SCFA production by the large community is %f\n',max_scfa);
 switch cnstrt
     case 1
         if sum(max_scfa)<=tol
@@ -149,8 +183,6 @@ for i_val = 1:iter
     l = n_org_actual; ii =1;
     modelCom_new = modelCom;
     pertModel = modelCom;
-    supp_out.del_seq(i_val,:) = del_seq;
-    
     
     while(l>maxMILP && ii<=n_org_actual && del_rounds<max_del_rounds)
         if (all(del_list~=del_seq(ii)))
@@ -162,10 +194,18 @@ for i_val = 1:iter
             res_new = optimizeCbModel(modelCom_new);
             if (res_new.f>= gr_frac* gr_max)
                 pertModel_scfa = modelCom_new;
+                %Growth rate constraint - individual gr rates considered
                 for k = 1:length(bm)
                     pertModel_scfa = addCOBRAConstraints(pertModel_scfa, ...
                         bm_rxns(k), gr_opt_frac*res_new.v(bm(k)),'dsense', 'G');
                 end
+                % Growth rate constraint based on overall gr rate. Less strict
+                % than the previous one - Final result could contain more
+                % number of species in minMicrobiome when this constraint
+                % is used.
+                %                 pertModel_scfa = addCOBRAConstraints(pertModel_scfa, ...
+                %                           bm_rxns, gr_frac*gr_max, 'dsense', 'G');
+                
                 pertModel_scfa.c(:) = 0;
                 pertModel_scfa.c(scfa_list) = wtg;
                 LPproblem = buildLPproblemFromModel(pertModel_scfa);
@@ -184,14 +224,26 @@ for i_val = 1:iter
                     
                 else
                     modelCom_new = pertModel;
+                    fprintf('Organism %d cannot be deleted! Trying another one...\n',del_seq(ii));
+                    
                 end
             else
                 modelCom_new = pertModel;
+                fprintf('Organism %d cannot be deleted! Trying another one...\n',del_seq(ii));
+                
             end
             ii = ii+1;
+            if(length(del_seq)<ii)
+                break
+            end
         else
             ii = ii+1;
+            if(length(del_seq)<ii)
+                break
+            end
         end
+        
+        
         if (l>milp_max && ii>n_org_actual)
             ii = 1;
             del_rounds = del_rounds+1;
@@ -202,10 +254,10 @@ for i_val = 1:iter
         continue
     end
     if isempty(del_list)
-        disp('No organism was removed')
+        fprintf('No organism was removed.\n')
         res_new = res_Com;
     else
-        org_thrown_out{i_val} = modelCom.modelID(del_list);
+        org_thrown_out = modelCom.modelID(del_list);
     end
     %% Add new variables & constraints
     %Binary variables
@@ -218,11 +270,11 @@ for i_val = 1:iter
         idx = find(strncmp(modelCom.rxns(n_r), 'biomass',7));
         n_rB = n_r(idx);
         
-            pertModel = addCOBRAConstraints(pertModel, {modelCom.rxns{n_rB}, ...
-                new_var{i}}, 0,'c', [-1, modelCom.lb(n_rB)], 'dsense', 'L');
-            pertModel = addCOBRAConstraints(pertModel, {modelCom.rxns{n_rB}, ...
-                new_var{i}}, 0,'c', [-1, modelCom.ub(n_rB)], 'dsense', 'G');
-       
+        pertModel = addCOBRAConstraints(pertModel, {modelCom.rxns{n_rB}, ...
+            new_var{i}}, 0,'c', [-1, modelCom.lb(n_rB)], 'dsense', 'L');
+        pertModel = addCOBRAConstraints(pertModel, {modelCom.rxns{n_rB}, ...
+            new_var{i}}, 0,'c', [-1, modelCom.ub(n_rB)], 'dsense', 'G');
+        
         if any(del_list==i)
             pertModel = addCOBRAConstraints(pertModel, new_var{i}, 0, 'dsense', 'E');
         end
@@ -249,15 +301,131 @@ for i_val = 1:iter
     MILPproblem = buildLPproblemFromModel(pertModel);
     MILPproblem.vartype = char(ones(1,size(modelCom.S,2))*'C');
     MILPproblem.vartype(size(modelCom.S,2)+1: size(modelCom.S,2)+n_org_actual) = 'B';
-    MILPproblem.x0 = [res_new.v; ones(n_org_actual,1)];
     
-    solutionPert{i_val} = solveCobraMILP(MILPproblem);
-    
-    if exist('org_thrown_out')
-        supp_out.org_thrown_out = org_thrown_out;
+    %Multiple runs changing the starting values of MILP
+    for kk = 1:MILP_runs
+        int_var_arr = ones(n_org_actual,1);
+        if ismember(kk, del_list)
+            %if (kk ~= MILP_runs || ~all(cellfun(@isempty,solutionPert)))
+            if (iter >1 || (kk~=1 && iter==1))
+                fprintf("Run %d of iteration %d: Organism %d has already been deleted. The solution from this run will be redundant. Proceeding to the next run.\n", kk, iter, kk);
+                continue;
+            end
+        end
+        int_var_arr(1:kk) = 0;
+        MILPproblem.x0 = [res_new.v; int_var_arr];
+        solutionPert_in_fun = {};
+        solutionPert_in_fun = solveCobraMILP(MILPproblem);
+        
+        if (solutionPert_in_fun.stat ~=1)
+            fprintf('Model %d in iteration %d is infeasible\n', kk, i_val);
+            continue;
+        end
+        
+        %Populating solutionPert - redundant solutions are avoided
+        repeat_solution = 0;
+        if exist ('solutionPert','var')
+            for k = 1:size(solutionPert,2)
+                if (solutionPert_in_fun.int == solutionPert{k}.int)
+                    repeat_solution = 1;
+                end
+            end
+        end
+        
+        if(repeat_solution == 0)
+            solutionPert{end+1} = solutionPert_in_fun;
+            if exist('org_thrown_out', 'var')
+                supp_out.org_thrown_out(end+1,:) = org_thrown_out;
+            end
+            if ~isempty(del_list)
+                supp_out.del_seq(end+1,:) = del_seq;
+            end
+            supp_out.num_min_orgs(end+1) = nnz(solutionPert_in_fun.int);
+            
+            orgs_in_minMicrobiome = modelCom.modelID(find(solutionPert_in_fun.int));
+            orgs_stitched = strjoin(orgs_in_minMicrobiome,',\n');
+            supp_out.minMicrobiomes{end+1} = orgs_stitched;
+        else
+            fprintf('Solution %d from iteration %d is redundant\n',kk, i_val);
+            continue;
+        end
+        
+        
+        
+        %% Butyrate production rate of the minimal community
+        if strcmp(met_calc_min,'yes')
+            model_scfa_calc = modelCom;
+            for i = 1:n_org_actual
+                pat = strcat('org',int2str(i));
+                n_r = find(cellfun(@(x) (length(char(x))>length(pat)) ...
+                    && strcmpi(pat,x(length(char(x))-(length(pat)-1):end)),model_scfa_calc.rxns));
+                idx = find(strncmp(model_scfa_calc.rxns(n_r), 'biomass',7));
+                n_rB = n_r(idx);
+                
+                if (solutionPert_in_fun.int(i) == 0)
+                    
+                    for jj = 1:length(n_r)
+                        model_scfa_calc = addCOBRAConstraints(model_scfa_calc, n_r(jj), 0, 'dsense', 'E');
+                    end
+                    
+                end
+            end
+            gr_min = gr_frac* res_Com.f;
+            model_scfa_calc = addCOBRAConstraints(model_scfa_calc, bm_rxns, gr_min, 'dsense', 'G');
+            
+            model_scfa_calc.c(:) = 0;
+            model_scfa_calc.c(scfa_list) = wtg;
+            LPproblem = buildLPproblemFromModel(model_scfa_calc);
+            solutionPert_model_scfa_calc = solveCobraLP(LPproblem);
+            
+            supp_out.scfa_minMicrobiome(end+1) = solutionPert_model_scfa_calc.obj;
+            
+            elapsedTime = toc(startTime);
+            if (elapsedTime > time_budget)
+                disp('Time budget exceeded! Stopping execution! Results based on the run so far are displayed');
+                exitOuterLoop = true;
+                supp_out.elapsedTime = elapsedTime;
+                break;
+            end
+        else
+            elapsedTime = toc(startTime);
+            if (elapsedTime > time_budget)
+                disp('Time budget exceeded! Stopping execution! Results based on the run so far are displayed.');
+                exitOuterLoop = true;
+                supp_out.elapsedTime = elapsedTime;
+                break;
+            end
+            
+            continue;
+        end
+        
+    end
+    if (exitOuterLoop == true)
+        break
     end
     
 end
+
+%% Wrapping up
 if all(cellfun(@isempty,solutionPert))
     disp('Try again');
+    elapsedTime = toc(startTime);
+    fprintf('Elapsed time is %g seconds\n',elapsedTime);
+else
+    [supp_out.smallest_minMicrobiome, idx] = min(supp_out.num_min_orgs);
+    fprintf('Here is a microbiome with the minimal organisms:\n');
+    disp(modelCom.modelID(find(solutionPert{idx}.int)));
+    if strcmp(met_calc_min,'yes')
+        fprintf('The max butyrate production by this community is %f. \n', supp_out.scfa_minMicrobiome(idx));
+        [supp_out.best_scfa_producer_minMicrobiome, idx] = max(supp_out.scfa_minMicrobiome);
+        fprintf('The best butyrate producer minimal microbiome is:\n');
+        disp(modelCom.modelID(find(solutionPert{idx}.int)))
+        fprintf('The max butyrate production by this community is %f. \n', supp_out.scfa_minMicrobiome(idx));
+    end
+    supp_out.pert_gr = sum(solutionPert{1}.cont(bm));
+    supp_out.pert_scfa = solutionPert{1}.cont(scfa_list);
+    
+    elapsedTime = toc(startTime);
+    supp_out.elapsedTime = elapsedTime;
+    fprintf('Elapsed time is %g seconds\n',elapsedTime);
 end
